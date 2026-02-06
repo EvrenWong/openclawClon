@@ -25,17 +25,51 @@
             z-index: 10;
             text-align: center;
             pointer-events: none;
-            text-shadow: 0 0 20px #00f2ff;
+            text-shadow: 0 0 30px #00f2ff, 0 0 60px #0062ff;
         }
         h1 {
             font-size: 4rem;
             letter-spacing: 10px;
             text-transform: uppercase;
-            animation: pulse 2s infinite alternate;
+            animation: pulse 2s infinite alternate, glow 3s ease-in-out infinite alternate;
         }
         @keyframes pulse {
             from { opacity: 0.5; transform: scale(0.95); }
             to { opacity: 1; transform: scale(1); }
+        }
+        @keyframes glow {
+            from { text-shadow: 0 0 30px #00f2ff, 0 0 60px #0062ff; }
+            to { text-shadow: 0 0 50px #00f2ff, 0 0 100px #0062ff, 0 0 150px #ff00ff; }
+        }
+        p {
+            font-size: 1.5rem;
+            margin-top: 20px;
+            opacity: 0.8;
+            animation: fadeInOut 3s ease-in-out infinite;
+        }
+        @keyframes fadeInOut {
+            0%, 100% { opacity: 0.5; }
+            50% { opacity: 1; }
+        }
+        .cursor {
+            position: fixed;
+            width: 20px;
+            height: 20px;
+            border: 2px solid #00f2ff;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 1000;
+            mix-blend-mode: difference;
+            transition: transform 0.1s ease;
+        }
+        .cursor-trail {
+            position: fixed;
+            width: 5px;
+            height: 5px;
+            background: #00f2ff;
+            border-radius: 50%;
+            pointer-events: none;
+            z-index: 999;
         }
     </style>
 </head>
@@ -54,30 +88,115 @@
         canvas.height = window.innerHeight;
 
         let particles = [];
+        let mouse = { x: 0, y: 0 };
+        let isMouseActive = false;
         const colors = ['#00f2ff', '#0062ff', '#ff00ff', '#7000ff'];
+        let explosionParticles = [];
 
         class Particle {
-            constructor() {
-                this.x = Math.random() * canvas.width;
-                this.y = Math.random() * canvas.height;
-                this.size = Math.random() * 2 + 0.1;
-                this.speedX = Math.random() * 2 - 1;
-                this.speedY = Math.random() * 2 - 1;
+            constructor(x, y, isExplosion = false) {
+                this.x = x || Math.random() * canvas.width;
+                this.y = y || Math.random() * canvas.height;
+                this.size = isExplosion ? Math.random() * 4 + 1 : Math.random() * 2 + 0.1;
+                this.speedX = isExplosion ? (Math.random() - 0.5) * 8 : Math.random() * 2 - 1;
+                this.speedY = isExplosion ? (Math.random() - 0.5) * 8 : Math.random() * 2 - 1;
                 this.color = colors[Math.floor(Math.random() * colors.length)];
+                this.life = isExplosion ? 100 : 1;
+                this.decay = isExplosion ? 0.02 : 0;
+                this.friction = 0.98;
+                this.sizeChange = 0;
             }
+            
             update() {
+                // Mouse interaction
+                if (isMouseActive) {
+                    const dx = mouse.x - this.x;
+                    const dy = mouse.y - this.y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    const maxDistance = 150;
+                    
+                    if (distance < maxDistance) {
+                        const force = (maxDistance - distance) / maxDistance;
+                        const angle = Math.atan2(dy, dx);
+                        const attraction = force * 0.03;
+                        
+                        // Create swirling effect
+                        const perpX = -Math.sin(angle) * force * 0.01;
+                        const perpY = Math.cos(angle) * force * 0.01;
+                        
+                        this.speedX -= perpX;
+                        this.speedY -= perpY;
+                        
+                        if (distance > 50) {
+                            this.speedX += Math.cos(angle) * attraction;
+                            this.speedY += Math.sin(angle) * attraction;
+                        }
+                    }
+                }
+
+                // Apply friction and update position
+                this.speedX *= this.friction;
+                this.speedY *= this.friction;
                 this.x += this.speedX;
                 this.y += this.speedY;
+                
+                // Size animation
+                if (this.sizeChange > 0) {
+                    this.size += this.sizeChange;
+                    this.sizeChange -= 0.02;
+                }
+                
+                // Boundary wrapping
                 if (this.x > canvas.width) this.x = 0;
                 if (this.x < 0) this.x = canvas.width;
                 if (this.y > canvas.height) this.y = 0;
                 if (this.y < 0) this.y = canvas.height;
+                
+                // Life decay for explosion particles
+                this.life -= this.decay;
+                this.size *= (this.life / 100);
             }
+            
             draw() {
+                const alpha = this.life > 0 ? this.life / 100 : 1;
+                ctx.globalAlpha = alpha;
                 ctx.fillStyle = this.color;
+                ctx.shadowBlur = 20;
+                ctx.shadowColor = this.color;
                 ctx.beginPath();
-                ctx.arc(this.x, this.y, this.size, 0, Math.PI * 2);
+                ctx.arc(this.x, this.y, Math.max(0.1, this.size), 0, Math.PI * 2);
                 ctx.fill();
+                ctx.shadowBlur = 0;
+                ctx.globalAlpha = 1;
+            }
+        }
+
+        function drawConnections() {
+            ctx.strokeStyle = 'rgba(0, 242, 255, 0.1)';
+            ctx.lineWidth = 1;
+            
+            for (let i = 0; i < particles.length; i++) {
+                for (let j = i + 1; j < particles.length; j++) {
+                    const dx = particles[i].x - particles[j].x;
+                    const dy = particles[i].y - particles[j].y;
+                    const distance = Math.sqrt(dx * dx + dy * dy);
+                    
+                    if (distance < 100) {
+                        const alpha = (100 - distance) / 100 * 0.5;
+                        ctx.globalAlpha = alpha;
+                        ctx.beginPath();
+                        ctx.moveTo(particles[i].x, particles[i].y);
+                        ctx.lineTo(particles[j].x, particles[j].y);
+                        ctx.stroke();
+                    }
+                }
+            }
+            ctx.globalAlpha = 1;
+        }
+
+        function createExplosion(x, y) {
+            for (let i = 0; i < 15; i++) {
+                explosionParticles.push(new Particle(x, y, true));
             }
         }
 
@@ -88,14 +207,88 @@
         }
 
         function animate() {
-            ctx.fillStyle = 'rgba(5, 5, 5, 0.1)';
+            // Clear canvas with fade effect
+            ctx.fillStyle = 'rgba(5, 5, 5, 0.05)';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
-            particles.forEach(p => {
-                p.update();
-                p.draw();
+            
+            // Draw connections
+            drawConnections();
+            
+            // Update and draw regular particles
+            particles = particles.filter(particle => {
+                particle.update();
+                particle.draw();
+                return particle.life > 0;
             });
+            
+            // Update and draw explosion particles
+            explosionParticles = explosionParticles.filter(particle => {
+                particle.update();
+                particle.draw();
+                return particle.life > 0;
+            });
+            
+            // Draw mouse interaction circle
+            if (isMouseActive) {
+                ctx.strokeStyle = 'rgba(0, 242, 255, 0.3)';
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.arc(mouse.x, mouse.y, 50, 0, Math.PI * 2);
+                ctx.stroke();
+            }
+            
             requestAnimationFrame(animate);
         }
+
+        // Mouse events
+        canvas.addEventListener('mousemove', (e) => {
+            mouse.x = e.clientX;
+            mouse.y = e.clientY;
+            isMouseActive = true;
+        });
+
+        canvas.addEventListener('mouseenter', () => {
+            isMouseActive = true;
+        });
+
+        canvas.addEventListener('mouseleave', () => {
+            isMouseActive = false;
+        });
+
+        canvas.addEventListener('click', (e) => {
+            createExplosion(e.clientX, e.clientY);
+            // Create size ripple effect
+            particles.forEach(particle => {
+                const dx = e.clientX - particle.x;
+                const dy = e.clientY - particle.y;
+                const distance = Math.sqrt(dx * dx + dy * dy);
+                if (distance < 200) {
+                    particle.sizeChange = 0.5;
+                }
+            });
+        });
+
+        // Touch events for mobile
+        canvas.addEventListener('touchmove', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            mouse.x = touch.clientX;
+            mouse.y = touch.clientY;
+            isMouseActive = true;
+        });
+
+        canvas.addEventListener('touchstart', (e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            mouse.x = touch.clientX;
+            mouse.y = touch.clientY;
+            isMouseActive = true;
+            createExplosion(touch.clientX, touch.clientY);
+        });
+
+        canvas.addEventListener('touchend', () => {
+            isMouseActive = false;
+        });
 
         init();
         animate();
@@ -103,6 +296,33 @@
         window.addEventListener('resize', () => {
             canvas.width = window.innerWidth;
             canvas.height = window.innerHeight;
+        });
+
+        // Create custom cursor
+        const cursor = document.createElement('div');
+        cursor.className = 'cursor';
+        document.body.appendChild(cursor);
+
+        const cursorTrail = [];
+        for (let i = 0; i < 20; i++) {
+            const trail = document.createElement('div');
+            trail.className = 'cursor-trail';
+            document.body.appendChild(trail);
+            cursorTrail.push({ element: trail, x: 0, y: 0 });
+        }
+
+        document.addEventListener('mousemove', (e) => {
+            cursor.style.left = e.clientX - 10 + 'px';
+            cursor.style.top = e.clientY - 10 + 'px';
+            
+            cursorTrail.forEach((trail, index) => {
+                setTimeout(() => {
+                    trail.x += (e.clientX - trail.x) * 0.1;
+                    trail.y += (e.clientY - trail.y) * 0.1;
+                    trail.element.style.left = trail.x + 'px';
+                    trail.element.style.top = trail.y + 'px';
+                }, index * 10);
+            });
         });
     </script>
 </body>
